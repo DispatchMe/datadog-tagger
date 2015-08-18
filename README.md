@@ -15,5 +15,5 @@ $ go install
 Make sure you have `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` exported in your terminal. Ask Jason for the below keys.
 
 ```bash
-$ datadog-tagger --apiKey <datadog API key> --appKey <datadog app key>
+$ datadog-tagger --apiKey="<datadog API key>" --appKey="<datadog app key>"
 ```

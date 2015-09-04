@@ -12,13 +12,8 @@ For example:
 2. Environment variable: `GO15VENDOREXPERIMENT="1"`
 
 ## Instructions
-
 ```bash
-$ cd $GOPATH/src/github.com/DispatchMe
-$ git clone git@github.com:DispatchMe/datadog-tagger
-$ cd datadog-tagger
-$ go build
-$ go install
+$ go get github.com/DispatchMe/datadog-tagger
 ```
 
 # Usage

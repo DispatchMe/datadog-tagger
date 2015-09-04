@@ -6,94 +6,114 @@ import (
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
-	flag "github.com/ogier/pflag"
+	"github.com/codegangsta/cli"
 	"io/ioutil"
-	"log"
 	"net/http"
+	"os"
 	"strings"
 )
 
 var instanceTags = make(map[string][]string)
 
+func fail(err error) {
+	println(err.Error())
+	os.Exit(1)
+}
 func main() {
 
-	var apiKey string
-	var appKey string
+	app := cli.NewApp()
 
-	flag.StringVar(&apiKey, "apiKey", "", "DataDog API key")
-	flag.StringVar(&appKey, "appKey", "", "DataDog Application Key")
-
-	flag.Parse()
-
-	client := ec2.New(&aws.Config{
-		Region: aws.String("us-east-1"),
-	})
-
-	output, err := client.DescribeInstances(nil)
-
-	if err != nil {
-		log.Fatal(err)
+	app.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:   "apiKey",
+			Usage:  "API key",
+			EnvVar: "DATADOG_API_KEY",
+		},
+		cli.StringFlag{
+			Name:   "appKey",
+			Usage:  "App key",
+			EnvVar: "DATADOG_APP_KEY",
+		},
+		cli.StringFlag{
+			Name:   "awsRegion",
+			Usage:  "Region for EC2 instances",
+			EnvVar: "AWS_REGION",
+		},
 	}
 
-	for _, r := range output.Reservations {
-		for _, instance := range r.Instances {
-			tags := make([]string, 0)
+	app.Action = func(c *cli.Context) {
+		client := ec2.New(&aws.Config{
+			Region: aws.String(c.String("awsRegion")),
+		})
 
-			isBeanstalk := false
-			for _, tag := range instance.Tags {
-				switch *tag.Key {
-				// Only use this one for now
-				case "elasticbeanstalk:environment-name":
-					isBeanstalk = true
+		output, err := client.DescribeInstances(nil)
 
-					// By convention, the stage is the last segment when split by "-"
-					spl := strings.Split(*tag.Value, "-")
-					environment := spl[len(spl)-1]
-					app := strings.Join(spl[0:len(spl)-1], "-")
-					tags = append(tags, "environment:"+environment)
-					tags = append(tags, "application:"+app)
+		if err != nil {
+			fail(err)
+		}
+
+		for _, r := range output.Reservations {
+			for _, instance := range r.Instances {
+				tags := make([]string, 0)
+
+				isBeanstalk := false
+				for _, tag := range instance.Tags {
+					switch *tag.Key {
+					// Only use this one for now
+					case "elasticbeanstalk:environment-name":
+						isBeanstalk = true
+
+						// By convention, the stage is the last segment when split by "-"
+						spl := strings.Split(*tag.Value, "-")
+						environment := spl[len(spl)-1]
+						app := strings.Join(spl[0:len(spl)-1], "-")
+						tags = append(tags, "environment:"+environment)
+						tags = append(tags, "application:"+app)
+					}
+				}
+
+				if isBeanstalk {
+					instanceTags[*instance.InstanceId] = tags
 				}
 			}
+		}
 
-			if isBeanstalk {
-				instanceTags[*instance.InstanceID] = tags
+		for hostId, tags := range instanceTags {
+			data := map[string]interface{}{
+				"tags": tags,
 			}
+
+			fmt.Printf("Updating host %s with tags %s\n", hostId, tags)
+
+			buf := &bytes.Buffer{}
+			encoder := json.NewEncoder(buf)
+			err := encoder.Encode(data)
+			if err != nil {
+				fail(err)
+			}
+
+			request, err := http.NewRequest("PUT", "https://app.datadoghq.com/api/v1/tags/hosts/"+hostId+"?api_key="+c.String("apiKey")+"&application_key="+c.String("appKey"), buf)
+			if err != nil {
+				fail(err)
+			}
+
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				fail(err)
+			}
+
+			fmt.Printf("Status code %d\n", response.StatusCode)
+
+			body, err := ioutil.ReadAll(response.Body)
+			if err != nil {
+				fail(err)
+			}
+
+			fmt.Println(string(body))
+
 		}
 	}
 
-	for hostId, tags := range instanceTags {
-		data := map[string]interface{}{
-			"tags": tags,
-		}
-
-		log.Printf("Updating host %s with tags %s\n", hostId, tags)
-
-		buf := &bytes.Buffer{}
-		encoder := json.NewEncoder(buf)
-		err := encoder.Encode(data)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		request, err := http.NewRequest("PUT", "https://app.datadoghq.com/api/v1/tags/hosts/"+hostId+"?api_key="+apiKey+"&application_key="+appKey, buf)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		response, err := http.DefaultClient.Do(request)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		fmt.Printf("Status code %d\n", response.StatusCode)
-
-		body, err := ioutil.ReadAll(response.Body)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		fmt.Println(string(body))
-
-	}
+	app.Run(os.Args)
 
 }
